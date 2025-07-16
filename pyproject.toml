@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "deep_phase"
+version = "0.0.1"
+authors = [
+  { name="Troy Comi", email="troycomi@gmail.com" },
+]
+description = "A package for classifying cells"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    'numpy',
+    'pandas',
+    'scipy',
+    'scikit-image',
+    'scikit-learn',
+    'click',
+    'bioio',
+    "matplotlib",
+    "seaborn",
+    "jupyterlab",
+    "torch",
+    "torchvision",
+]
+
+[project.scripts]
+deepPhase = "deep_phase.__main__:main"

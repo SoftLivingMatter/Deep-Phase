@@ -1,0 +1,269 @@
+import urllib.parse
+import re
+import numpy as np
+import pandas as pd
+from collections import defaultdict
+from deep_phase.datasets.bioio_image_dataset import CellImageDataset
+import torch
+from pathlib import Path
+import yaml
+
+
+def read_cellprofiler_csv(
+    file,
+    crop_size,
+    category_mapper,
+):
+    data = pd.read_csv(file)
+    data = data[
+        (data["Location_Center_X"] - crop_size > 0)
+        & (data["Location_Center_Y"] - crop_size > 0)
+        & (data["Location_Center_X"] + crop_size < data["Metadata_SizeX"])
+        & (data["Location_Center_Y"] + crop_size < data["Metadata_SizeY"])
+    ]
+
+    result = pd.DataFrame().assign(
+        local_path=data["Metadata_FileLocation"].map(
+            lambda path: urllib.parse.unquote(urllib.parse.urlparse(path).path)
+        ),
+        category=category_mapper(data),
+        series=data["Metadata_Series"],
+        center_x=data["Location_Center_X"].round().astype(int),
+        center_y=data["Location_Center_Y"].round().astype(int),
+    )
+    if result["category"].isna().any():
+        raise ValueError(
+            "Unable to match category for "
+            + data.loc[result["category"].isna(), "Metadata_FileLocation"].iloc[0]
+        )
+
+    return result
+
+
+def read_processed_csv(
+    file,
+    crop_size,
+):
+    '''
+    Read a csv file that is already parsed.
+
+    Performs similar checks and modifications to read_cellprofiler_csv but
+    does not remap categories or rename columns.  In addition to the standard
+    required columns, also need size_x and size_y
+
+    If series is not present it is set to 0
+    '''
+
+    if isinstance(file, pd.DataFrame):
+        data = file
+    else:
+        data = pd.read_csv(file)
+    data = data[
+        (data["center_x"] - crop_size > 0)
+        & (data["center_y"] - crop_size > 0)
+        & (data["center_x"] + crop_size < data["size_x"])
+        & (data["center_y"] + crop_size < data["size_y"])
+    ].copy()
+
+    data['center_x'] = data["center_x"].round().astype(int)
+    data['center_y'] = data["center_y"].round().astype(int)
+
+    if 'series' not in data.columns:
+        data['series'] = 0
+
+    return data
+
+
+def build_file_mapper():
+    def mapper(data):
+        return data["Metadata_FileLocation"].map(
+            lambda path: Path(
+                urllib.parse.unquote(urllib.parse.urlparse(path).path)
+            ).stem
+        )
+
+    return mapper
+
+
+def read_plate_layout(csv_layout):
+    # read plate layout
+    rows = "ABCDEFGH"
+    cols = [f"{i:02}" for i in range(1, 13)]
+    with open(csv_layout) as layout:
+        well_to_category = {
+            f"{row}{col}": value.strip()
+            for row, line in zip(rows, layout)
+            for col, value in zip(cols, line.split(","))
+            if value.strip()
+        }
+    return well_to_category
+
+
+def build_well_mapper(
+    csv_layout,
+    well_regex=r"_Well([A-H]\d{1,2})",
+    loose=False,
+):
+    well_to_category = read_plate_layout(csv_layout)
+
+    def mapper(data):
+        well = (
+            data["Metadata_FileLocation"]
+            .str.extract(well_regex, expand=True)
+            .iloc[:, 0]
+        )
+        if well.isna().any() and not loose:
+            raise ValueError(
+                "Unable to parse well from file "
+                + data.loc[well.isna(), "Metadata_FileLocation"].iloc[0]
+            )
+
+        # standardize well format with leading 0
+        # the \g<1> is a capturing group, \10 looks for group 10
+        well.replace("^(.)(.)$", r"\g<1>0\2", regex=True, inplace=True)
+        # build mapping function
+        well = well.map(well_to_category)
+
+        if loose:  # replace unknown wells with filename
+            file_mapper = build_file_mapper()
+            well[well.isna()] = file_mapper(data[well.isna()])
+
+        return well
+
+    return mapper
+
+
+def sample_by_class(df, n, by="category", replace=False):
+    return df.groupby(by).sample(n=n, random_state=12345, replace=replace)
+
+
+def split_train_test(df, proportion=(0.8, 0.1, 0.1), seed=12345):
+    train, test, validation = torch.utils.data.random_split(
+        df, proportion, generator=torch.Generator().manual_seed(seed)
+    )
+
+    usage = df['data_usage'].copy()
+    usage.iloc[train.indices] = 'train'
+    usage.iloc[test.indices] = 'test'
+    usage.iloc[validation.indices] = 'validation'
+
+    test = df.iloc[test.indices]
+    train = df.iloc[train.indices]
+
+    return train, test, usage
+
+
+def make_datasets(data, log_csv, map_category='category'):
+    log_info = parse_log(log_csv)
+    rgb_map = get_rgb_map(log_info['rgb_map'], int(log_info['channels']))
+    classes = log_info['training_classes'] + ['no_call']
+    crop_size = int(log_info['crop_size'])
+
+    categories = data[map_category].copy()
+    data = data.copy()
+    data.category = data.called_class  # for reading in dataset
+    counts = data.groupby('category').called_class.count()
+    # filter out those classes with fewer than 10 to pick from
+    data = data[~data.category.isin(counts[counts<10].index)]
+    # limit to cut down on loading time for unneeded data
+    return {category: CellImageDataset(data.loc[categories == category], rgb_map, crop_size, classes, 0, 0)
+            for category in categories.unique()}
+
+
+def parse_log(log_file):
+    if str(log_file).endswith('csv'):  # old style log
+        def parse_line(line):
+            tokens = line.split(':')
+            val = ':'.join(tokens[1:])
+            return tokens[0].split("'")[1], val.strip(" ,'\n}")
+
+        result = {}
+        with open(log_file) as log:
+            raw_config = dict(
+                parse_line(line)
+                for line in log
+                if line.startswith('#') and ':' in line
+            )
+        raw_config['training_classes'] = raw_config['training_classes'].split(',')
+
+    else:  # yaml
+        return yaml.safe_load(open(log_file, 'r'))
+
+
+
+def get_rgb_map(channel_map, channels):
+    result = np.zeros((3, channels))
+    match = re.match(
+        r"(?P<red>\d+),(?P<green>\d+),(?P<blue>\d+)"  # basic
+        r"(:(?P<white>\d+)\[(?P<fraction>\d+)])?",  # white
+        channel_map,
+    )
+    if not match:
+        raise ValueError(f"Unable to match rgb_map {channel_map}")
+    vals = match.groupdict()
+    white_val = int(vals["fraction"]) / 100 if vals["fraction"] else 0
+    color_val = 1 - white_val
+
+    for i, color in enumerate(("red", "green", "blue")):
+        color = int(vals[color])
+        assert 0 <= color <= channels, f"Channel {color} out of range in {channel_map}"
+        if color == 0:
+            continue
+        result[i, color - 1] = color_val
+
+    if vals["white"]:
+        color = int(vals["white"])
+        assert 0 <= color <= channels, f"Channel {color} out of range in {channel_map}"
+        if color != 0:
+            # this is to ensure the rows sum to 1
+            # result[:, color-1] = 1 - result.sum(axis=1)
+            # this keeps the grey value grey
+            result[:, color - 1] = white_val
+
+    return result
+
+
+def add_response(dataset, standards_csv, standards=None, mapping=None, map_by='category'):
+    '''Add activation space response.
+
+    loads standards csv and takes average activation as vector points
+    if standards is set, limit to standards with the given category
+    mapping can be 
+        - a tuple of (untreated, treated)
+        - a dict of category: (untreated, treated)
+    If unset, will group dataset by category and try to map with (untreated, category)
+    '''
+
+    if isinstance(standards_csv, pd.DataFrame):
+        stds = standards_csv
+    else:
+        stds = pd.read_csv(standards_csv)
+    stds['category'] = stds['category'].str.lstrip('\ufeff')
+    if standards is not None:
+        stds = stds[stds['category'].isin(standards)]
+
+    centers = stds.groupby('category')[['act_x', 'act_y']].mean()
+
+    result = dataset.copy()
+    result['response'] = 0
+
+    def response(data, untreated, treated):
+        untreated = centers.loc[untreated, ['act_x', 'act_y']].to_numpy()
+        treated = centers.loc[treated, ['act_x', 'act_y']].to_numpy()
+        d = data[['act_x', 'act_y']].to_numpy() - untreated
+        return np.dot(d, treated-untreated) / np.dot(treated-untreated, treated-untreated)
+
+    if mapping is None:
+        for category in result[map_by].unique():
+            result.loc[result[map_by] == category, 'response'] = response(
+                result[result[map_by] == category], 'Untreated', category)
+
+    elif isinstance(mapping, tuple):
+        result['response'] = response(result, *mapping)
+
+    else:
+        for category, keys in mapping.items():
+            result.loc[result[map_by] == category, 'response'] = response(
+                result[result[map_by] == category], *keys)
+
+    return result

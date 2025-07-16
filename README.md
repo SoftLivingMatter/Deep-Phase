@@ -88,7 +88,7 @@ which are not changed can be removed to use default values.
 augmentation: randaug
 # number of images to include in a batch of training or inference images
 batch_size: 128
-# how to parse cell positions from input csv.  Options are cellprofiler or parsed
+# how to parse cell positions from input csv.  Options are cellprofiler or processed
 cell_position_format: cellprofiler
 # name of csv with cell locations.  Must be in root directory of each input folder
 cell_positions: EnlargedObjects.csv
@@ -136,7 +136,7 @@ training_classes:
 ```
 
 The cellprofiler format must contain the columns `Location_Center_X`, `Metadata_SizeX`,
-(and for `Y`) `Metadata_FileLocation`, and `Metadata_Series`.  The parsed format requires
+(and for `Y`) `Metadata_FileLocation`, and `Metadata_Series`.  The processed format requires
 columns for `center_x`, `size_x` (and `y`), `series` (will set to 0 if missing), `category`,
 and `local_path`.
 
