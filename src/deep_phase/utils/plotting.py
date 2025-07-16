@@ -1,7 +1,10 @@
 import numpy as np
 import pandas as pd
 import seaborn as sns
+import torch
 import matplotlib.pyplot as plt
+from deep_phase.utils import data_operations
+from deep_phase.models import modified_resnet
 
 
 def confusion_matrix(data, show_acc=False, save_name=None, plot_order=None, log_norm=False):
@@ -174,3 +177,29 @@ def show_training(log_file, save_name=None):
         plt.savefig(save_name)
 
     return fig, ax
+
+
+def generate_activation_space(log_file, x_limit, y_limit, samples=100, network_file=None):
+    log = data_operations.parse_log(log_file)
+    network = modified_resnet.build_network(
+        resnet=log['resnet'],
+        out_classes=len(log['training_classes']),
+    )
+    if network_file is None:
+        network_file = log['network_name']
+    modified_resnet.load_network(network, network_file)
+
+    grid = np.meshgrid(np.linspace(*x_limit, num=samples), np.linspace(*y_limit, num=samples))
+    # generate activation space locations
+    acts = torch.from_numpy(np.array((grid[0].flatten(), grid[1].flatten()))).to(torch.float)
+
+    # get the output of final layer
+    classes = network.fc[1].to(torch.float)(acts.T)
+    classes = torch.nn.Softmax(dim=1)(classes).detach().numpy()
+
+    max_class = classes.argmax(axis=1)  # class with highest probability
+    # set no calls to -1
+    max_class[classes.max(axis=1) < 0.8] = -1
+
+    # return an image like object, number corresponds to class
+    return max_class.reshape(*grid[0].shape), grid

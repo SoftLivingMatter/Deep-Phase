@@ -49,7 +49,7 @@ def save_network(net, path):
 
 
 def load_network(net, path, device=torch.device('cpu')):
-    net.load_state_dict(torch.load(path, map_location=device))
+    net.load_state_dict(torch.load(path, map_location=device, weights_only=True))
     return net
 
 def make_fc_layer(fc_layers, in_features, out_features):
