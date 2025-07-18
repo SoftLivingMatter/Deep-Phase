@@ -26,17 +26,17 @@ to the directory containing images. Wells are signified in the image filename
 as `Well{WELL}`.  Alternatively, you can retain the filename and match it to
 experimental conditions later.
 ```
-,,Normal,Normal,Normal,Normal
-,,Cap,Cap,Cap,Cap
-,,Necklace,Necklace,Necklace,Necklace
+,,DMSO,DMSO,DMSO,DMSO
+,,CX-5461,CX-5461,CX-5461,CX-5461
+,,FVP,FVP,FVP,FVP
 ```
 Note that headers should not be included, empty rows above or columns to the
 left must be included. If the first row was empty it’d be:
 ```
 ,,,,,,
-,,Normal,Normal,Normal,Normal
-,,Cap,Cap,Cap,Cap
-,,Necklace,Necklace,Necklace,Necklace
+,,DMSO,DMSO,DMSO,DMSO
+,,CX-5461,CX-5461,CX-5461,CX-5461
+,,FVP,FVP,FVP,FVP
 ```
 
 All images in the directory will be analyzed, ensure there are no extra files.
