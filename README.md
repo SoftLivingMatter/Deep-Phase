@@ -1,17 +1,17 @@
-# deep-phase
-ResNet classification of cell phenotypes
+# Deep-Phase
+ResNet classification of condensate morphologies
 
 ## Setup
 ### Installing this package
 ```bash
 # clone the repo to your project directory
-git clone https://github.com/SoftLivingMatter/deep-phase.git
-cd deep-phase
+git clone https://github.com/SoftLivingMatter/Deep-Phase.git
+cd Deep-Phase
 
 conda create --name deepPhase pytorch torchvision pytorch-cuda=12.1 -c pytorch -c nvidia
 conda activate deepPhase
 
-pip install bioio bioio-nd2  # or your preferred file type
+pip install bioio bioio-nd2 bioio-tifffile  # or your preferred file type
 pip install -e .
 
 # cache model on login node
@@ -26,27 +26,17 @@ to the directory containing images. Wells are signified in the image filename
 as `Well{WELL}`.  Alternatively, you can retain the filename and match it to
 experimental conditions later.
 ```
-,,CTRL,CTRL,CTRL,CTRL
-,,UTP15,UTP15,UTP15,UTP15
-,,HEAT1,HEAT1,HEAT1,HEAT1
-,,WDR43,WDR43,WDR43,WDR43
-,,RPL37a,RPL37a,RPL37a,RPL37a
-,,BXCD1,BXCD1,BXCD1,BXCD1
-,,CNOT1,CNOT1,CNOT1,CNOT1
-,,RENT2,RENT2,RENT2,RENT2
+,,Normal,Normal,Normal,Normal
+,,Cap,Cap,Cap,Cap
+,,Necklace,Necklace,Necklace,Necklace
 ```
 Note that headers should not be included, empty rows above or columns to the
 left must be included. If the first row was empty it’d be:
 ```
 ,,,,,,
-,,CTRL,CTRL,CTRL,CTRL
-,,UTP15,UTP15,UTP15,UTP15
-,,HEAT1,HEAT1,HEAT1,HEAT1
-,,WDR43,WDR43,WDR43,WDR43
-,,RPL37a,RPL37a,RPL37a,RPL37a
-,,BXCD1,BXCD1,BXCD1,BXCD1
-,,CNOT1,CNOT1,CNOT1,CNOT1
-,,RENT2,RENT2,RENT2,RENT2
+,,Normal,Normal,Normal,Normal
+,,Cap,Cap,Cap,Cap
+,,Necklace,Necklace,Necklace,Necklace
 ```
 
 All images in the directory will be analyzed, ensure there are no extra files.
