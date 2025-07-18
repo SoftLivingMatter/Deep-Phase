@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/1020233337.svg)](https://doi.org/10.5281/zenodo.16103290)
+
 # Deep-Phase
 ResNet classification of condensate morphologies
 
