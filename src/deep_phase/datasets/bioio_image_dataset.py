@@ -6,6 +6,8 @@ import pandas as pd
 import numpy as np
 import skimage
 
+from deep_phase.utils import data_operations
+
 def RandomNoise(sigma):
     def gauss_noise_tensor(img):
         assert isinstance(img, torch.Tensor)
@@ -124,6 +126,26 @@ class CellImageDataset(torch.utils.data.Dataset):
         )
         self.setting = 'train'
 
+    @staticmethod
+    def from_config(config_yaml, dataframe=None):
+        config = data_operations.parse_log(config_yaml)
+        rgb_map = data_operations.get_rgb_map(config['rgb_map'], config['channels'])
+
+        if not dataframe:
+            dataframe = pd.read_csv(config['eval_name'])
+
+        result = CellImageDataset(
+            dataframe,
+            rgb_map,
+            crop_size=config['crop_size'],
+            categories=config['training_classes'],
+            rotation=config['rotation'],
+            noise=config['noise'],
+            augmentation=config['augmentation'],
+        )
+        result.eval()
+        return result
+
     def __len__(self):
         return len(self.df)
 
@@ -134,6 +156,10 @@ class CellImageDataset(torch.utils.data.Dataset):
         return (transform(self.images[idx].to(self.device)),
                 self.sub_label[idx],
                 self.sup_label[idx])
+
+    def get_image(self, idx):
+        transform = torchvision.transforms.CenterCrop(224)
+        return np.moveaxis(transform(self.images[idx]).numpy(), 0, -1)
 
     def train(self):
         self.setting = 'train'

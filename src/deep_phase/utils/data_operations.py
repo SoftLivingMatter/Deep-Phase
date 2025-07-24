@@ -3,7 +3,6 @@ import re
 import numpy as np
 import pandas as pd
 from collections import defaultdict
-from deep_phase.datasets.bioio_image_dataset import CellImageDataset
 import torch
 from pathlib import Path
 import yaml
@@ -151,23 +150,6 @@ def split_train_test(df, proportion=(0.8, 0.1, 0.1), seed=12345):
     train = df.iloc[train.indices]
 
     return train, test, usage
-
-
-def make_datasets(data, log_csv, map_category='category'):
-    log_info = parse_log(log_csv)
-    rgb_map = get_rgb_map(log_info['rgb_map'], int(log_info['channels']))
-    classes = log_info['training_classes'] + ['no_call']
-    crop_size = int(log_info['crop_size'])
-
-    categories = data[map_category].copy()
-    data = data.copy()
-    data.category = data.called_class  # for reading in dataset
-    counts = data.groupby('category').called_class.count()
-    # filter out those classes with fewer than 10 to pick from
-    data = data[~data.category.isin(counts[counts<10].index)]
-    # limit to cut down on loading time for unneeded data
-    return {category: CellImageDataset(data.loc[categories == category], rgb_map, crop_size, classes, 0, 0)
-            for category in categories.unique()}
 
 
 def parse_log(log_file):
