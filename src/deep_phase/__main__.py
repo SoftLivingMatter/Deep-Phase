@@ -35,6 +35,7 @@ DEFAULT_ARGUMENTS = dict(
     freeze=False,
     limit=None,
     training_classes=['class1', 'class2'],
+    no_call_threshold=0.8,
     mapper="plate",
     output_dir=".",
     channels=4,
@@ -169,6 +170,7 @@ def main(**cli_args):
                 sub_classes,
                 dataset_args,
                 config_args["batch_size"],
+                config_args["no_call_threshold"],
             )
             evaluated_dataset.to_csv(config_args['eval_name'], index=None)
 
@@ -320,7 +322,7 @@ def train(network, dataset, categories, limit, log, test_train_split, dataset_ar
     train_network(network, train, test, log, **training_kwargs)
 
 
-def evaluate(network, dataset, categories, dataset_args, batch_size):
+def evaluate(network, dataset, categories, dataset_args, batch_size, no_call_threshold=0.8):
     new_cols = []
 
     has_latent_layers = not isinstance(network.fc[0], torch.nn.modules.activation.ReLU)
@@ -368,7 +370,7 @@ def evaluate(network, dataset, categories, dataset_args, batch_size):
         dataset.loc[rows, new_cols] = result
     probs = dataset.filter(like="cls_").to_numpy()
     dataset["called_class"] = [categories[i] for i in probs.argmax(axis=1)]
-    dataset.loc[(probs < 0.8).all(axis=1), "called_class"] = "no_call"
+    dataset.loc[(probs < no_call_threshold).all(axis=1), "called_class"] = "no_call"
 
     return dataset
 
