@@ -325,7 +325,11 @@ def evaluate(network, dataset, categories, dataset_args, batch_size):
 
     has_latent_layers = not isinstance(network.fc[0], torch.nn.modules.activation.ReLU)
     if has_latent_layers:
-        new_cols += [f"act_{char}" for _, char in zip(range(network.fc[0].out_features), "xyz")]
+        latent_layers = network.fc[0].out_features
+        if latent_layers <= 3:
+            new_cols += [f"act_{char}" for _, char in zip(range(latent_layers), "xyz")]
+        else:
+            new_cols += [f"act_{ind}" for ind in range(latent_layers)]
 
     new_cols += [f"cls_{cat}" for cat in categories]
 
