@@ -249,3 +249,12 @@ def add_response(dataset, standards_csv, standards=None, mapping=None, map_by='c
                 result[result[map_by] == category], *keys)
 
     return result
+
+
+def recall_dataset(dataset, no_call_threshold=0.8):
+    probabilities = dataset.filter(like="cls_")
+    categories = [col[4:] for col in probabilities.columns]  # strip "cls_"
+    result = dataset.copy()
+    result['called_class'] = [categories[i] for i in probabilities.to_numpy().argmax(axis=1)]
+    result.loc[(probabilities < no_call_threshold).all(axis=1), "called_class"] = "no_call"
+    return result
