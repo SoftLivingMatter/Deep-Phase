@@ -10,7 +10,7 @@ ResNet classification of condensate morphologies
 git clone https://github.com/SoftLivingMatter/Deep-Phase.git
 cd Deep-Phase
 
-conda create --name deepPhase pytorch torchvision pytorch-cuda=12.1 -c pytorch -c nvidia
+conda create --name deepPhase pytorch torchvision pytorch-cuda=12.1 -c conda-forge -c pytorch -c nvidia
 conda activate deepPhase
 
 pip install bioio bioio-nd2 bioio-tifffile  # or your preferred file type
