@@ -5,6 +5,7 @@ import torchvision
 import pandas as pd
 import numpy as np
 import skimage
+import concurrent.futures
 
 from deep_phase.utils import data_operations
 
@@ -143,6 +144,7 @@ class CellImageDataset(torch.utils.data.Dataset):
             noise=config['noise'],
             augmentation=config['augmentation'],
         )
+
         result.eval()
         return result
 
@@ -194,68 +196,71 @@ class CellImageDataset(torch.utils.data.Dataset):
             (len(self.df), 3, 256, 256),
             dtype=torch.float32,
             device=device, requires_grad=False)
-        starting_ind = 0
-        resize = torchvision.transforms.Resize(256, antialias=True)
         rgb_map = torch.as_tensor(rgb_map, device=device, dtype=torch.float32)
-        for name, dat in self.df.groupby(["local_path", "series"]):
-            path, series = name
 
-            bio_img = bioio.BioImage(path)
-            if series_as_time:
-                print(series)
-                image = torch.as_tensor(
-                    bio_img.get_image_data('CZYX', T=int(series)).squeeze().astype(np.int32),
-                    device=device,
-                )
-            else:
-                bio_img.set_scene(int(series))
-                image = torch.as_tensor(
-                    bio_img.get_image_data().squeeze().astype(np.int32),
-                    device=device,
-                )
-            channels = image.shape[0]
+        # create a relative grid for slicing (from -crop_size to crop_size-1)
+        y_offset, x_offset = np.indices((2*crop_size, 2*crop_size)) - crop_size
 
-            for i, (_, row) in enumerate(
-                dat[["center_x", "center_y"]].iterrows(),
-                start=starting_ind,
-            ):
-                x, y = row.to_numpy()
-                # image order is TCZYX, e.g. y then x
-                if image.ndim == 3:
-                    img = image[
-                        :,
-                        y - crop_size : y + crop_size,
-                        x - crop_size : x + crop_size,
-                    ].type(torch.float32)
-                    # scale min/max
-                    min_val = img.view(channels, -1).min(axis=1)[0]
-                    max_val = img.view(channels, -1).max(axis=1)[0]
-                    img = (
-                            (img - min_val[:, None, None])
-                            / (max_val[:, None, None] - min_val[:, None, None])
-                    )
-                    # apply the rgb map by converting image to channels x pixel
-                    # matrix, perform matmul, then reshape to 3 x row x col
-                    result[i] = resize(
-                        (rgb_map @ img.view(channels, -1)).view(3, *img.shape[1:])
-                    )
-                else:  # single channel image
-                    img = image[
-                        y - crop_size : y + crop_size,
-                        x - crop_size : x + crop_size,
-                    ].type(torch.float32)
-                    # scale min/max
-                    min_val = img.min()
-                    max_val = img.max()
-                    img = (
-                            (img - min_val)
-                            / (max_val - min_val)
-                    )
-                    # apply the rgb map by converting image to channels x pixel
-                    # matrix, perform matmul, then reshape to 3 x row x col
-                    result[i] = resize(
-                        (rgb_map @ img.view(1, -1)).view(3, *img.shape)
-                    )
+        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+            futures = [
+                executor.submit(
+                    _load_image, dat_index, dat,
+                    series_as_time, device, x_offset,
+                    y_offset, rgb_map)
+                for dat_index, dat in self.df.groupby(["local_path", "series"])
+            ]
 
-            starting_ind += len(dat)
+            # Collect results as threads complete
+            for future in concurrent.futures.as_completed(futures):
+                idx, stack = future.result()
+                result[idx] = stack
+
         return (result * 255).to(torch.uint8)
+
+
+def _load_image(dat_index, dat, series_as_time, device, x_offset, y_offset, rgb_map):
+    path, series = dat_index
+    resize = torchvision.transforms.Resize(256, antialias=True)
+    bio_img = bioio.BioImage(path)
+    if series_as_time:
+        print(series)
+        image = torch.as_tensor(
+            bio_img.get_image_data('CZYX', T=int(series)).squeeze().astype(np.float32),
+            device=device,
+        )
+    else:
+        bio_img.set_scene(int(series))
+        image = torch.as_tensor(
+            bio_img.get_image_data().squeeze().astype(np.float32),
+            device=device,
+        )
+
+    if image.ndim == 2:
+        image = torch.unsqueeze(image, 0)
+    channels = image.shape[0]
+
+    dat_np = dat[['center_x', 'center_y']].to_numpy()
+    x_centers = dat_np[:, 0]
+    y_centers = dat_np[:, 1]
+
+    # broadcast to create absolute coordinates for all crops
+    y_indices = y_centers[:, None, None] + y_offset[None, :, :]
+    x_indices = x_centers[:, None, None] + x_offset[None, :, :]
+
+    img_stack = image[:, y_indices, x_indices].type(torch.float32)
+    img_stack = img_stack.to(device).permute(1, 0, 2, 3)
+
+    min_vals = img_stack.min(dim=-1, keepdim=True)[0].min(dim=-2, keepdim=True)[0]
+    max_vals = img_stack.max(dim=-1, keepdim=True)[0].max(dim=-2, keepdim=True)[0]
+
+    ranges = max_vals - min_vals
+    ranges[ranges == 0] = 1e-6  # handle empty images
+    img_stack = (img_stack - min_vals) / ranges
+
+    # matrix multiply the rgb_map with image stack to convert channels to 3
+    # n x c: rbg_map new and old channel numbers
+    # bcwh: batch, old channel, width, height
+    # bnwh: batch, new chanenl, width, height
+    img_stack = torch.einsum("nc, bcwh -> bnwh", rgb_map, img_stack)
+    img_stack = resize(img_stack)
+    return dat.index, img_stack
