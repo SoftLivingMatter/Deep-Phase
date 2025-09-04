@@ -17,7 +17,7 @@ def build_network(
     if starting_network:
         state_without_fc = {
             key: value
-            for key, value in torch.load(starting_network, map_location=device).items()
+            for key, value in torch.load(starting_network, map_location=device, weights_only=True).items()
             if not key.startswith('fc')
         }
         net.load_state_dict(state_without_fc, strict=False)

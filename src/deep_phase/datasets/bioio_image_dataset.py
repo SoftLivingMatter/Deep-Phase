@@ -40,10 +40,12 @@ class CellImageDataset(torch.utils.data.Dataset):
             augmentation='randaug',
             device=torch.device('cpu'),
             series_as_time=False,
+            multithread=True,
         ):
 
         self.df = self._validate_dataframe(dataframe)
         self.device = device
+        self.multithread = multithread
 
         if isinstance(categories, dict):
             cats = list(itertools.chain(*categories.values()))
@@ -132,7 +134,7 @@ class CellImageDataset(torch.utils.data.Dataset):
         config = data_operations.parse_log(config_yaml)
         rgb_map = data_operations.get_rgb_map(config['rgb_map'], config['channels'])
 
-        if not dataframe:
+        if dataframe is None:
             dataframe = pd.read_csv(config['eval_name'])
 
         result = CellImageDataset(
@@ -201,19 +203,27 @@ class CellImageDataset(torch.utils.data.Dataset):
         # create a relative grid for slicing (from -crop_size to crop_size-1)
         y_offset, x_offset = np.indices((2*crop_size, 2*crop_size)) - crop_size
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
-            futures = [
-                executor.submit(
-                    _load_image, dat_index, dat,
-                    series_as_time, device, x_offset,
-                    y_offset, rgb_map)
-                for dat_index, dat in self.df.groupby(["local_path", "series"])
-            ]
+        if self.multithread:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+                futures = [
+                    executor.submit(
+                        _load_image, dat_index, dat,
+                        series_as_time, device, x_offset,
+                        y_offset, rgb_map)
+                    for dat_index, dat in self.df.groupby(["local_path", "series"])
+                ]
 
-            # Collect results as threads complete
-            for future in concurrent.futures.as_completed(futures):
-                idx, stack = future.result()
+                # Collect results as threads complete
+                for future in concurrent.futures.as_completed(futures):
+                    idx, stack = future.result()
+                    result[idx] = stack
+
+        else:
+            for dat_index, dat in self.df.groupby(["local_path", "series"]):
+                idx, stack = _load_image(dat_index, dat, series_as_time,
+                                         device, x_offset, y_offset, rgb_map)
                 result[idx] = stack
+
 
         return (result * 255).to(torch.uint8)
 

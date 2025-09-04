@@ -87,14 +87,14 @@ def main(**cli_args):
     categories = config_args["training_classes"]
     device = get_device()
 
-    dataset_args = (
-        rgb_map,
-        config_args["crop_size"],
-        categories,
-        config_args["rotation"],
-        config_args["noise"],
-        config_args["augmentation"],
-        device,
+    dataset_kwargs = dict(
+        rgb_map=rgb_map,
+        crop_size=config_args["crop_size"],
+        categories=categories,
+        rotation=config_args["rotation"],
+        noise=config_args["noise"],
+        augmentation=config_args["augmentation"],
+        device=device,
     )
 
     dataset = []
@@ -107,7 +107,9 @@ def main(**cli_args):
             if config_args["mapper"] == "plate":
                 mapper = data_ops.build_well_mapper(base_dir / "plate_layout.csv")
             elif config_args["mapper"] == "plate-loose":
-                mapper = data_ops.build_well_mapper(base_dir / "plate_layout.csv", loose=True)
+                mapper = data_ops.build_well_mapper(base_dir / "plate_layout.csv", fuzzy="loose")
+            elif config_args["mapper"] == "plate-ignore":
+                mapper = data_ops.build_well_mapper(base_dir / "plate_layout.csv", fuzzy="ignore")
             csv_reader = lambda file, crop: data_ops.read_cellprofiler_csv(file, crop, mapper)
         dataset.append(
             csv_reader(
@@ -149,6 +151,7 @@ def main(**cli_args):
             )
             test_train_split = np.array(config_args['test_train_split'])
             test_train_split /= test_train_split.sum()  # normalize
+            dataset_kwargs['multithread'] = True
             train(
                 network,
                 dataset,
@@ -156,7 +159,7 @@ def main(**cli_args):
                 config_args["limit"],
                 log,
                 test_train_split,
-                dataset_args,
+                dataset_kwargs,
                 training_kwargs,
             )
 
@@ -164,11 +167,12 @@ def main(**cli_args):
 
         if cli_args["eval"]:
             resnet.load_network(network, config_args['network_name'], device)
+            dataset_kwargs['multithread'] = cli_args["train"]  # multithread if used above
             evaluated_dataset = evaluate(
                 network,
                 dataset,
                 sub_classes,
-                dataset_args,
+                dataset_kwargs,
                 config_args["batch_size"],
                 config_args["no_call_threshold"],
             )
@@ -277,7 +281,7 @@ def get_device():
     return torch.device(dev)
 
 
-def train(network, dataset, categories, limit, log, test_train_split, dataset_args, training_kwargs):
+def train(network, dataset, categories, limit, log, test_train_split, dataset_kwargs, training_kwargs):
     # ensure all training classes are present
     unique_cats = list(dataset["category"].unique())
     for cat in categories:
@@ -313,16 +317,16 @@ def train(network, dataset, categories, limit, log, test_train_split, dataset_ar
     train, test, usage = data_ops.split_train_test(to_train)
     dataset.loc[usage.index, "data_usage"] = 'oversampled' if replace else usage
 
-    test = CellImageDataset(test, *dataset_args)
+    test = CellImageDataset(test, **dataset_kwargs)
     test.eval()
     log.write(f"# {len(test)} test images loaded\n")
-    train = CellImageDataset(train, *dataset_args)
+    train = CellImageDataset(train, **dataset_kwargs)
     log.write(f"# {len(train)} training images loaded\n")
 
     train_network(network, train, test, log, **training_kwargs)
 
 
-def evaluate(network, dataset, categories, dataset_args, batch_size, no_call_threshold=0.8):
+def evaluate(network, dataset, categories, dataset_kwargs, batch_size, no_call_threshold=0.8):
     new_cols = []
 
     has_latent_layers = not isinstance(network.fc[0], torch.nn.modules.activation.ReLU)
@@ -350,7 +354,7 @@ def evaluate(network, dataset, categories, dataset_args, batch_size, no_call_thr
             )
 
         with torch.no_grad():
-            images = CellImageDataset(dataset[rows], *dataset_args)
+            images = CellImageDataset(dataset[rows], **dataset_kwargs)
             images.eval()
             for data in torch.utils.data.DataLoader(images, batch_size=batch_size):
                 outputs = network(data[0])

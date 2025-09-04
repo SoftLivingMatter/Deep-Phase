@@ -30,11 +30,9 @@ def read_cellprofiler_csv(
         center_x=data["Location_Center_X"].round().astype(int),
         center_y=data["Location_Center_Y"].round().astype(int),
     )
-    if result["category"].isna().any():
-        raise ValueError(
-            "Unable to match category for "
-            + data.loc[result["category"].isna(), "Metadata_FileLocation"].iloc[0]
-        )
+
+    # remove unknown categories
+    result = result[~result["category"].isna()]
 
     return result
 
@@ -101,7 +99,7 @@ def read_plate_layout(csv_layout):
 def build_well_mapper(
     csv_layout,
     well_regex=r"_Well([A-H]\d{1,2})",
-    loose=False,
+    fuzzy=None,
 ):
     well_to_category = read_plate_layout(csv_layout)
 
@@ -111,7 +109,7 @@ def build_well_mapper(
             .str.extract(well_regex, expand=True)
             .iloc[:, 0]
         )
-        if well.isna().any() and not loose:
+        if well.isna().any() and fuzzy is None:
             raise ValueError(
                 "Unable to parse well from file "
                 + data.loc[well.isna(), "Metadata_FileLocation"].iloc[0]
@@ -121,13 +119,22 @@ def build_well_mapper(
         # the \g<1> is a capturing group, \10 looks for group 10
         well.replace("^(.)(.)$", r"\g<1>0\2", regex=True, inplace=True)
         # build mapping function
-        well = well.map(well_to_category)
+        categories = well.map(well_to_category)
 
-        if loose:  # replace unknown wells with filename
-            file_mapper = build_file_mapper()
-            well[well.isna()] = file_mapper(data[well.isna()])
+        if categories.isna().any():
+            if fuzzy == "loose":  # replace unknown wells with filename
+                file_mapper = build_file_mapper()
+                categories[categories.isna()] = file_mapper(data[categories.isna()])
+            elif fuzzy == "ignore":  # ignore, inform user
+                print("Ignoring the following file without matches in plate layout")
+                print(data.loc[categories.isna(), "Metadata_FileLocation"].unique())
+            else:
+                raise ValueError(
+                    "Unable to match category for "
+                    + data.loc[categories.isna(), "Metadata_FileLocation"].iloc[0]
+                )
 
-        return well
+        return categories
 
     return mapper
 
