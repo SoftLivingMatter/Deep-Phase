@@ -220,6 +220,7 @@ def add_response(dataset, standards_csv, standards=None, mapping=None, map_by='c
     mapping can be 
         - a tuple of (untreated, treated)
         - a dict of category: (untreated, treated)
+        - if the tuple is of size 1, the untreated sample will be assumed as (0,0)
     If unset, will group dataset by category and try to map with (untreated, category)
     '''
 
@@ -236,9 +237,14 @@ def add_response(dataset, standards_csv, standards=None, mapping=None, map_by='c
     result = dataset.copy()
     result['response'] = 0
 
-    def response(data, untreated, treated):
-        untreated = centers.loc[untreated, ['act_x', 'act_y']].to_numpy()
-        treated = centers.loc[treated, ['act_x', 'act_y']].to_numpy()
+    def response(data, *args):
+        if len(args) > 1:
+            untreated = centers.loc[args[0], ['act_x', 'act_y']].to_numpy()
+            treated = centers.loc[args[1], ['act_x', 'act_y']].to_numpy()
+        else:
+            # passed a single value, set untreated to 0,0
+            untreated = np.array([0,0])
+            treated = centers.loc[args[0], ['act_x', 'act_y']].to_numpy()
         d = data[['act_x', 'act_y']].to_numpy() - untreated
         return np.dot(d, treated-untreated) / np.dot(treated-untreated, treated-untreated)
 

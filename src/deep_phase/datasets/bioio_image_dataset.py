@@ -41,11 +41,15 @@ class CellImageDataset(torch.utils.data.Dataset):
             device=torch.device('cpu'),
             series_as_time=False,
             multithread=True,
+            internal_size=256,
+            output_size=224,
         ):
 
         self.df = self._validate_dataframe(dataframe)
         self.device = device
         self.multithread = multithread
+        self.output_size = output_size
+        self.internal_size = internal_size
 
         if isinstance(categories, dict):
             cats = list(itertools.chain(*categories.values()))
@@ -85,7 +89,7 @@ class CellImageDataset(torch.utils.data.Dataset):
         if augmentation == 'randaug':
             self.transform_train = torchvision.transforms.Compose(
                 [
-                    torchvision.transforms.RandomCrop(224),
+                    torchvision.transforms.RandomCrop(output_size),
                     torchvision.transforms.RandAugment(),
                     torchvision.transforms.ConvertImageDtype(torch.float32),
                     torchvision.transforms.Normalize(
@@ -108,7 +112,7 @@ class CellImageDataset(torch.utils.data.Dataset):
                 ]
 
             transforms += [
-                torchvision.transforms.RandomCrop(224),
+                torchvision.transforms.RandomCrop(output_size),
                 torchvision.transforms.RandomHorizontalFlip(),
                 torchvision.transforms.RandomVerticalFlip(),
                 torchvision.transforms.Normalize(
@@ -120,7 +124,7 @@ class CellImageDataset(torch.utils.data.Dataset):
 
         self.transform_eval = torchvision.transforms.Compose(
             [
-                torchvision.transforms.CenterCrop(224),
+                torchvision.transforms.CenterCrop(output_size),
                 torchvision.transforms.ConvertImageDtype(torch.float32),
                 torchvision.transforms.Normalize(
                     [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
@@ -162,7 +166,7 @@ class CellImageDataset(torch.utils.data.Dataset):
                 self.sup_label[idx])
 
     def get_image(self, idx):
-        transform = torchvision.transforms.CenterCrop(224)
+        transform = torchvision.transforms.CenterCrop(self.output_size)
         return np.moveaxis(transform(self.images[idx]).numpy(), 0, -1)
 
     def train(self):
@@ -195,7 +199,7 @@ class CellImageDataset(torch.utils.data.Dataset):
         # keep data on cpu, move to gpu when needed
         device = torch.device('cpu')
         result = torch.empty(
-            (len(self.df), 3, 256, 256),
+            (len(self.df), rgb_map.shape[0], self.internal_size, self.internal_size),
             dtype=torch.float32,
             device=device, requires_grad=False)
         rgb_map = torch.as_tensor(rgb_map, device=device, dtype=torch.float32)
@@ -209,7 +213,7 @@ class CellImageDataset(torch.utils.data.Dataset):
                     executor.submit(
                         _load_image, dat_index, dat,
                         series_as_time, device, x_offset,
-                        y_offset, rgb_map)
+                        y_offset, rgb_map, self.internal_size)
                     for dat_index, dat in self.df.groupby(["local_path", "series"])
                 ]
 
@@ -221,16 +225,17 @@ class CellImageDataset(torch.utils.data.Dataset):
         else:
             for dat_index, dat in self.df.groupby(["local_path", "series"]):
                 idx, stack = _load_image(dat_index, dat, series_as_time,
-                                         device, x_offset, y_offset, rgb_map)
+                                         device, x_offset, y_offset, rgb_map,
+                                         self.internal_size)
                 result[idx] = stack
 
 
         return (result * 255).to(torch.uint8)
 
 
-def _load_image(dat_index, dat, series_as_time, device, x_offset, y_offset, rgb_map):
+def _load_image(dat_index, dat, series_as_time, device, x_offset, y_offset, rgb_map, internal_size):
     path, series = dat_index
-    resize = torchvision.transforms.Resize(256, antialias=True)
+    resize = torchvision.transforms.Resize(internal_size, antialias=True)
     bio_img = bioio.BioImage(path)
     if series_as_time:
         print(series)
