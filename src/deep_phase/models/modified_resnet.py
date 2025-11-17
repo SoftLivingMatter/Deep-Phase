@@ -1,5 +1,8 @@
+from pathlib import Path
 import torch
 from torchvision.models import ResNet18_Weights, ResNet34_Weights, ResNet50_Weights
+from deep_phase.utils import data_operations
+from deep_phase.models import modified_resnet
 
 weight_dict = {
     'resnet18': ResNet18_Weights.IMAGENET1K_V1,
@@ -43,6 +46,36 @@ def build_network(
 
     return net
 
+def from_config(config, device=None):
+    if not isinstance(config, dict):
+        config = data_operations.parse_log(config)
+
+    if device is None:
+        device = data_operations.get_device()
+
+    net_args = dict(
+        device=device,
+        resnet=config["resnet"],
+        freeze=config["freeze"],
+        latent=config.get("latent", 2),
+        starting_network=config.get("starting_network", None),
+    )
+
+    if config.get('network_type', 'flat') == 'flat':
+        network = modified_resnet.build_network(out_classes=len(config['training_classes']), **net_args)
+    else:
+        network = modified_resnet.build_multiclass_network(config['training_classes'], **net_args)
+
+    network = load_network(
+        network,
+        Path(config['output_dir']) / config['network_name'],
+        device,
+    )
+
+    return network
+
+
+
 def save_network(net, path):
     net.eval()
     torch.save(net.state_dict(), path)
@@ -53,14 +86,17 @@ def load_network(net, path, device=torch.device('cpu')):
     return net
 
 def make_fc_layer(fc_layers, in_features, out_features):
-    layers = [torch.nn.ReLU()]
+    layers = []
     last_features = in_features
     for fc_layer in fc_layers:
         layers += [
             torch.nn.Linear(last_features, fc_layer),
-            torch.nn.Dropout(),
             torch.nn.ReLU(),
         ]
+        if fc_layer > 100:
+            layers += [
+                torch.nn.Dropout(fc_layer / 1000),  # 0.1 at 100, 0.5 at 500
+            ]
         last_features = fc_layer
     layers += [
         torch.nn.Linear(last_features, out_features),

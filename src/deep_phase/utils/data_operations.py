@@ -174,6 +174,9 @@ def parse_log(log_file):
                 if line.startswith('#') and ':' in line
             )
         raw_config['training_classes'] = raw_config['training_classes'].split(',')
+        raw_config['channels'] = int(raw_config['channels'])
+        raw_config['crop_size'] = int(raw_config['crop_size'])
+        return raw_config
 
     else:  # yaml
         return yaml.safe_load(open(log_file, 'r'))
@@ -232,20 +235,21 @@ def add_response(dataset, standards_csv, standards=None, mapping=None, map_by='c
     if standards is not None:
         stds = stds[stds['category'].isin(standards)]
 
-    centers = stds.groupby('category')[['act_x', 'act_y']].mean()
+    activation_columns = [c for c in stds.columns if c .startswith('act_')]
+    centers = stds.groupby('category')[activation_columns].mean()
 
     result = dataset.copy()
-    result['response'] = 0
+    result['response'] = 0.0
 
     def response(data, *args):
         if len(args) > 1:
-            untreated = centers.loc[args[0], ['act_x', 'act_y']].to_numpy()
-            treated = centers.loc[args[1], ['act_x', 'act_y']].to_numpy()
+            untreated = centers.loc[args[0], activation_columns].to_numpy()
+            treated = centers.loc[args[1], activation_columns].to_numpy()
         else:
             # passed a single value, set untreated to 0,0
             untreated = np.array([0,0])
-            treated = centers.loc[args[0], ['act_x', 'act_y']].to_numpy()
-        d = data[['act_x', 'act_y']].to_numpy() - untreated
+            treated = centers.loc[args[0], activation_columns].to_numpy()
+        d = data[activation_columns].to_numpy() - untreated
         return np.dot(d, treated-untreated) / np.dot(treated-untreated, treated-untreated)
 
     if mapping is None:
@@ -271,3 +275,15 @@ def recall_dataset(dataset, no_call_threshold=0.8):
     result['called_class'] = [categories[i] for i in probabilities.to_numpy().argmax(axis=1)]
     result.loc[(probabilities < no_call_threshold).all(axis=1), "called_class"] = "no_call"
     return result
+
+
+def get_device():
+    if torch.cuda.is_available():
+        dev = "cuda:0"
+        print("Using GPU")
+    else:
+        dev = "cpu"
+        print("Using cpu")
+    return torch.device(dev)
+
+

@@ -27,7 +27,7 @@ DEFAULT_ARGUMENTS = dict(
     batch_size=128,
     rotation=5,
     noise=0.1,
-    augmentation="randaug",
+    augmentation="randaug",  # or simple
     resnet="resnet34",
     network_type="flat",
     test_train_split=[0.8, 0.1, 0.1],
@@ -37,6 +37,7 @@ DEFAULT_ARGUMENTS = dict(
     training_classes=['class1', 'class2'],
     no_call_threshold=0.8,
     mapper="plate",
+    plate_layout="plate_layout.csv",
     output_dir=".",
     channels=4,
     rgb_map="2,3,4:1[25]",
@@ -85,7 +86,7 @@ def main(**cli_args):
 
     rgb_map = data_ops.get_rgb_map(config_args["rgb_map"], config_args["channels"])
     categories = config_args["training_classes"]
-    device = get_device()
+    device = data_ops.get_device()
 
     dataset_kwargs = dict(
         rgb_map=rgb_map,
@@ -104,12 +105,13 @@ def main(**cli_args):
     for directory in cli_args["inputs"]:
         base_dir = Path(directory)
         if config_args["cell_position_format"] == "cellprofiler":
+            layout = config_args["plate_layout"]
             if config_args["mapper"] == "plate":
-                mapper = data_ops.build_well_mapper(base_dir / "plate_layout.csv")
+                mapper = data_ops.build_well_mapper(base_dir / layout)
             elif config_args["mapper"] == "plate-loose":
-                mapper = data_ops.build_well_mapper(base_dir / "plate_layout.csv", fuzzy="loose")
+                mapper = data_ops.build_well_mapper(base_dir / layout, fuzzy="loose")
             elif config_args["mapper"] == "plate-ignore":
-                mapper = data_ops.build_well_mapper(base_dir / "plate_layout.csv", fuzzy="ignore")
+                mapper = data_ops.build_well_mapper(base_dir / layout, fuzzy="ignore")
             csv_reader = lambda file, crop: data_ops.read_cellprofiler_csv(file, crop, mapper)
         dataset.append(
             csv_reader(
@@ -271,16 +273,6 @@ def validate_args(cli_args):
 
     return config_args
 
-def get_device():
-    if torch.cuda.is_available():
-        dev = "cuda:0"
-        print("Using GPU")
-    else:
-        dev = "cpu"
-        print("Using cpu")
-    return torch.device(dev)
-
-
 def train(network, dataset, categories, limit, log, test_train_split, dataset_kwargs, training_kwargs):
     # ensure all training classes are present
     unique_cats = list(dataset["category"].unique())
@@ -329,13 +321,11 @@ def train(network, dataset, categories, limit, log, test_train_split, dataset_kw
 def evaluate(network, dataset, categories, dataset_kwargs, batch_size, no_call_threshold=0.8):
     new_cols = []
 
-    has_latent_layers = not isinstance(network.fc[0], torch.nn.modules.activation.ReLU)
-    if has_latent_layers:
-        latent_layers = network.fc[0].out_features
-        if latent_layers <= 3:
-            new_cols += [f"act_{char}" for _, char in zip(range(latent_layers), "xyz")]
-        else:
-            new_cols += [f"act_{ind}" for ind in range(latent_layers)]
+    latent_layers = network.fc[-1].in_features
+    if latent_layers <= 3:
+        new_cols += [f"act_{char}" for _, char in zip(range(latent_layers), "xyz")]
+    else:
+        new_cols += [f"act_{ind}" for ind in range(latent_layers)]
 
     new_cols += [f"cls_{cat}" for cat in categories]
 
@@ -348,10 +338,9 @@ def evaluate(network, dataset, categories, dataset_kwargs, batch_size, no_call_t
 
         activations = []
         predictions = []
-        if has_latent_layers:
-            hk = network.fc[0].register_forward_hook(
-                lambda m, input, output: activations.append(output.cpu())
-            )
+        hk = network.fc[-1].register_forward_hook(
+            lambda m, input, output: activations.append(input[0].cpu())
+        )
 
         with torch.no_grad():
             images = CellImageDataset(dataset[rows], **dataset_kwargs)
@@ -362,13 +351,11 @@ def evaluate(network, dataset, categories, dataset_kwargs, batch_size, no_call_t
                     outputs = outputs[0]
                 outputs = sm(outputs)
                 predictions.append(outputs.cpu())
-        if has_latent_layers:
-            hk.remove()
-            result = np.hstack(
-                (np.concatenate(activations), np.concatenate(predictions))
-            )
-        else:
-            result = np.concatenate(predictions)
+
+        hk.remove()
+        result = np.hstack(
+            (np.concatenate(activations), np.concatenate(predictions))
+        )
 
         # build result
         dataset.loc[rows, new_cols] = result

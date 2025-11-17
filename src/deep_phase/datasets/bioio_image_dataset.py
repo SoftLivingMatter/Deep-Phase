@@ -35,8 +35,8 @@ class CellImageDataset(torch.utils.data.Dataset):
             rgb_map: np.array,
             crop_size: int,
             categories,
-            rotation,
-            noise,
+            rotation=10,
+            noise=0.001,
             augmentation='randaug',
             device=torch.device('cpu'),
             series_as_time=False,
@@ -134,8 +134,11 @@ class CellImageDataset(torch.utils.data.Dataset):
         self.setting = 'train'
 
     @staticmethod
-    def from_config(config_yaml, dataframe=None):
+    def from_config(config_yaml, dataframe=None, device=torch.device('cpu'), **overrides):
         config = data_operations.parse_log(config_yaml)
+
+        for key, value in overrides.items():
+            config[key] = value
         rgb_map = data_operations.get_rgb_map(config['rgb_map'], config['channels'])
 
         if dataframe is None:
@@ -148,7 +151,8 @@ class CellImageDataset(torch.utils.data.Dataset):
             categories=config['training_classes'],
             rotation=config['rotation'],
             noise=config['noise'],
-            augmentation=config['augmentation'],
+            augmentation=config.get('augmentation', 'simple'),
+            device=device,
         )
 
         result.eval()
@@ -159,6 +163,8 @@ class CellImageDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         transform = self.transform_eval
+        if self.setting == 'raw':
+            return self.images[idx].to(self.device)
         if self.setting == 'train':
             transform = self.transform_train
         return (transform(self.images[idx].to(self.device)),
