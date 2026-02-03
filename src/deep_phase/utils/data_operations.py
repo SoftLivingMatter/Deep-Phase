@@ -98,7 +98,7 @@ def read_plate_layout(csv_layout):
 
 def build_well_mapper(
     csv_layout,
-    well_regex=r"_Well([A-H]\d{1,2})",
+    well_regex=r"Well([A-H]\d{1,2})",
     fuzzy=None,
 ):
     well_to_category = read_plate_layout(csv_layout)

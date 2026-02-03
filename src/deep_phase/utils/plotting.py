@@ -141,7 +141,7 @@ def show_dataset(dataset, max_cols=5, shuffle=True, save_name=None, title=None, 
     return fig, axes
 
 
-def show_training(log_file, save_name=None):
+def melt_training(log_file):
     data = pd.read_csv(log_file, comment="#")
 
     long = pd.melt(
@@ -162,7 +162,10 @@ def show_training(log_file, save_name=None):
     )
     data["phase"] = data["phase"].str.removesuffix("_acc")
     data = data.merge(long, on=["epoch", "phase"])
+    return data
 
+def show_training(log_file, save_name=None):
+    data = melt_training(log_file)
     min_epoch = data.iloc[data.loc[data["phase"] == "test", "loss"].argmin()]["epoch"]
 
     fig, ax = plt.subplots(1, 2, figsize=(12, 6))
@@ -176,25 +179,23 @@ def show_training(log_file, save_name=None):
     if save_name:
         plt.savefig(save_name)
 
-    return fig, ax
+    return fig, ax, data
 
 
 def generate_activation_space(log_file, x_limit, y_limit, samples=100, network_file=None):
     log = data_operations.parse_log(log_file)
-    network = modified_resnet.build_network(
-        resnet=log['resnet'],
-        out_classes=len(log['training_classes']),
-    )
+    network = modified_resnet.from_config(log, 'cpu')
+
     if network_file is None:
         network_file = log['network_name']
-    modified_resnet.load_network(network, network_file)
+        modified_resnet.load_network(network, network_file)
 
     grid = np.meshgrid(np.linspace(*x_limit, num=samples), np.linspace(*y_limit, num=samples))
     # generate activation space locations
     acts = torch.from_numpy(np.array((grid[0].flatten(), grid[1].flatten()))).to(torch.float)
 
     # get the output of final layer
-    classes = network.fc[1].to(torch.float)(acts.T)
+    classes = network.fc[-1].to(torch.float)(acts.T)
     classes = torch.nn.Softmax(dim=1)(classes).detach().numpy()
 
     max_class = classes.argmax(axis=1)  # class with highest probability
